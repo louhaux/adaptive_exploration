@@ -1,0 +1,1646 @@
+---
+title: "Main Analysis for: Adaptive exploration in chimpanzees"
+author: "Lou M. Haux"
+date: "02/02/2024"
+output: html_document
+---
+
+## FIRST STEPS
+
+```{r Load libraries}
+# Load and install (if necessary) required libraries
+pacman::p_load(tidyverse, dplyr, brms, here, psych, ggplot2, kableExtra, ggridges, plyr, tidyr, cowplot, ggeasy, apaTables, writexl)
+```
+
+```{r Load my workspace}
+# load("workspace_risksearch_analysis.RData")
+```
+
+```{r Load data}
+# The path is relative to your current working directory in R
+getwd()
+
+# Import the data file using rio's import function and assign it to chimp_risksearch
+chimp_risksearch <- rio::import("./SourceData_S02_adaptive_exploration_data_experiment.txt")
+
+head(chimp_risksearch)
+
+# Print the number of rows in the data set
+print(paste("The data set chimp_risksearch has", nrow(chimp_risksearch), "rows."))
+```
+
+```{r Remove rows with NA in searches}
+## Remove rows with NA in 'searched' column, because NA indicates that no data was collected for this trial (see missing trials due to COVID)
+chimp_risksearch <- drop_na(chimp_risksearch, searched)
+
+print(paste("The data set chimp_risksearch has", nrow(chimp_risksearch), "rows."))
+```
+
+
+## PREPARATORY STEPS BAYESIAN ANALYSIS
+
+```{r Convert variables into factors I}
+# Define the columns to convert to factors
+columns_to_convert <- c(
+  "subject", "subject_sex", "condition", "condition_order",
+  "searched", "switched_assortment", "first_searched_assortment",
+  "last_searched_assortment", "searched_both_assortments",
+  "experienced_variance_risk", "choice_side", "choice_assortment",
+  "sample_found", "search_assortment",
+  "exploration_strategy"
+)
+
+# Convert those columns to factors
+chimp_risksearch[columns_to_convert] <- lapply(chimp_risksearch[columns_to_convert], factor)
+```
+
+```{r Create Integers}
+# Define the columns to convert to integers
+columns_to_convert <- c("session", "search_order", "trial_no")
+
+# Convert those columns to integers
+chimp_risksearch[columns_to_convert] <- lapply(chimp_risksearch[columns_to_convert], as.integer)
+```
+
+```{r Dummy coding}
+# Convert 'searched' to binary numeric format where 'yes' is 1
+chimp_risksearch$searched <- as.numeric(chimp_risksearch$searched == levels(chimp_risksearch$searched)[2])
+
+# Convert 'subject_sex' to binary numeric format where 'male' is 1
+chimp_risksearch$subject_sex <- as.numeric(chimp_risksearch$subject_sex == levels(chimp_risksearch$subject_sex)[2])
+
+# Create 'sample_found_binary' where '0' is '0', '0.25' and '0.5' are '1'
+chimp_risksearch$sample_found_binary <- revalue(chimp_risksearch$sample_found, c("0" = "0", "0.25" = "1", "0.5" = "1"))
+```
+
+```{r Convert variables into factors II}
+# List of columns to convert to factors
+columns_to_convert <- c(
+  "subject", "subject_sex", "condition", "condition_order", "switched_assortment",
+  "searched_both_assortments", "experienced_variance_risk", "choice_side",
+  "search_assortment", "first_searched_assortment", "last_searched_assortment",
+  "choice_assortment"
+)
+
+# Convert those columns to factors
+chimp_risksearch[columns_to_convert] <- lapply(chimp_risksearch[columns_to_convert], as.factor)
+```
+
+```{r Z-transformation of variables}
+# Z-score normalization for 'trial_no' column
+chimp_risksearch$z.trial <- as.vector(scale(chimp_risksearch$trial_no))
+
+# Z-score normalization for 'subject_age' column
+chimp_risksearch$z.subject_age <- as.vector(scale(chimp_risksearch$subject_age))
+```
+
+
+
+## DESCRIPTIVE STATISTICS
+
+```{r Overall Descriptive statistics}
+# Check the data by getting descriptive statistics
+psych::describe(chimp_risksearch)
+
+# Get a summary of the dataset
+summary(chimp_risksearch)
+
+# Display the structure of the dataset
+str(chimp_risksearch)
+```
+
+```{r Age Descriptive statistics}
+# Calculate and print the mean age
+mean(chimp_risksearch$subject_age)
+
+# Calculate and print the standard deviation of ages
+sd(chimp_risksearch$subject_age)
+
+# Find and print the range of ages
+range(chimp_risksearch$subject_age)
+
+# Create a histogram of ages
+qplot(chimp_risksearch$subject_age)
+```
+
+
+# Exploration 
+
+```{r Exploration Descriptive statistics}
+# Count total searched
+chimp_risksearch %>% dplyr::count(searched)
+
+# Count total searched per trial and condition
+chimp_risksearch %>%
+  group_by(trial_no, condition) %>%
+  dplyr::count(searched)
+
+# Mean search per subject, trial, condition
+chimp_risksearch %>%
+  group_by(trial_no, condition, subject) %>%
+  filter(!is.na(searched)) %>%
+  dplyr::summarise(mean_search = mean(searched))
+
+# Calculate mean searched per subject over both conditions
+chimp_risksearch %>%
+  group_by(subject) %>%
+  filter(!is.na(searched)) %>%
+  dplyr::summarise(mean_search = mean(searched))
+
+# Calculate mean searched per trial and condition
+chimp_risksearch_mean <- chimp_risksearch %>%
+  group_by(trial_no, condition) %>%
+  filter(!is.na(searched)) %>%
+  dplyr::summarise(mean_search = mean(searched))
+```
+
+```{r Summary exploration}
+summary_table_exploration <- chimp_risksearch %>%
+  dplyr::group_by(subject, condition, trial_no, subject_sex, subject_age, condition_order) %>%
+  dplyr::summarize(
+    searched_yes = sum(searched == 1, na.rm = TRUE),
+    searched_no = sum(searched == 0, na.rm = TRUE)
+  )
+
+summary_table_exploration
+```
+
+```{r Exploration Descriptive statistics plots}
+# Create the plot for mean proportion of openened trays
+exploration_mean_plot <- ggplot(chimp_risksearch_mean, aes(trial_no, mean_search)) +
+  geom_line() +
+  geom_smooth(method = "loess") +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("Trials\n") +
+  ylab("Mean proportion of opened trays\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+exploration_mean_plot
+
+
+# Create the plot for mean proportion of openened trays per condition
+exploration_mean_plot_cond <- ggplot(chimp_risksearch_mean, aes(trial_no, mean_search, colour = condition)) +
+  geom_smooth() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("Trials\n") +
+  ylab("Mean proportion of opened trays\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+exploration_mean_plot_cond
+```
+
+```{r Proportion of exploration per subject and condition}
+# Calculate 'search_n' per trial, subject, searched, and condition
+# divided by 8 as per trial there are 8 possible trays to open (8 x 2 conditions = 16)
+chimp_risksearch_subject <- chimp_risksearch %>%
+  filter(!is.na(searched)) %>%
+  filter(searched == "1") %>%
+  group_by(trial_no, subject, searched, condition) %>%
+  dplyr::summarise(search_n = sum(searched)) %>%
+  mutate(search_n = search_n / 8)
+
+chimp_risksearch_subject
+
+# Plot the proportion of exploration per subject and condition
+exploration_subject_plot_cond <- ggplot(chimp_risksearch_subject, aes(subject, search_n, colour = condition)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("") +
+  ylab("Proportion of exploration\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+exploration_subject_plot_cond
+```
+
+```{r Proportion of exploration per subject and overall}
+# Calculate 'search_n' per trial, subject, and searched
+# divided by 8 as per trial there are 8 possible trays to open (8 x 2 conditions = 16)
+chimp_risksearch_subject <- chimp_risksearch %>%
+  filter(!is.na(searched)) %>%
+  filter(searched == "1") %>%
+  group_by(trial_no, subject, searched) %>%
+  dplyr::summarise(search_n = sum(searched)) %>%
+  mutate(search_n = search_n / 16)
+
+chimp_risksearch_subject
+
+# Plot the proportion of opened trays
+exploration_subject_plot <- ggplot(chimp_risksearch_subject, aes(subject, search_n)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("") +
+  ylab("Proportion of opened trays\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+exploration_subject_plot
+
+
+# Plot the proportion of opened trays (ordered by median)
+exploration_subject_plot_ordered <- ggplot(chimp_risksearch_subject, aes(x = reorder(subject, search_n, FUN = median), y = search_n)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("") +
+  ylab("Proportion of opened trays\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+exploration_subject_plot_ordered
+
+
+# Figure 2B
+# Save the plot
+ggsave(filename = "./adaptive_exploration_Figure_2B.png", plot = exploration_subject_plot_ordered, width = 10, height = 8)
+```
+
+```{r Mean number of boxes opened when the animals started the safe assortment vs. they started the risky assortment}
+# Calculate mean number of boxes opened
+chimp_risksearch %>%
+  group_by(first_searched_assortment) %>%
+  dplyr::summarise(mean_search_first_assortment = mean(searched))
+
+# Calculate mean for each trial, condition, and first_searched_assortment
+chimp_risksearch_mean_first_assortment <- chimp_risksearch %>%
+  group_by(trial_no, condition, first_searched_assortment) %>%
+  filter(!is.na(searched)) %>%
+  dplyr::summarise(mean_search_first_assortment = mean(searched)) %>%
+  drop_na(first_searched_assortment)
+
+# Define condition labels
+cond.labs <- c("Changing\n environment", "Stable\n environment")
+names(cond.labs) <- c("changing_environment", "stable_environment")
+
+# Create plot
+exploration_mean_plot_first_assortment <- ggplot(chimp_risksearch_mean_first_assortment, aes(trial_no, mean_search_first_assortment, colour = first_searched_assortment)) +
+  geom_smooth(alpha = 0.2) +
+  theme_minimal() +
+  facet_grid(~condition, labeller = labeller(condition = cond.labs)) +
+  theme(
+    strip.text.x = element_text(size = 14),
+    strip.text.y = element_text(size = 20)
+  ) +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("\nTrials") +
+  ylab("Mean proportion of exploration\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5),
+    axis.ticks.length.y = unit(.25, "cm")
+  ) +
+  scale_colour_discrete(
+    name = "First exploration",
+    breaks = c("risky", "safe"),
+    labels = c("Risky", "Safe")
+  )
+
+exploration_mean_plot_first_assortment
+```
+
+
+# Choice
+
+```{r Count choice per subject}
+# Choice: which assortment did chimpanzees choose?
+# all sample is used to only have the first row of eauch trial (the choice of the assortment is only done once per trial)
+
+# Group by subject and condition, filter specific samples, and count choice_assortment
+chimp_risksearch_choice <- chimp_risksearch %>%
+  group_by(subject, condition) %>%
+  filter(all_samples %in% c("1", "9", "17", "25")) %>%
+  dplyr::count(choice_assortment)
+
+# Print the result
+print(chimp_risksearch_choice)
+
+# Import the dataset
+chimp_risksearch_choice <- rio::import("./data_risksearch_choice.txt")
+
+# see Excel Sheet data_risksearch_choice for % results. Because not all chimpanzees did all trials, we had to adjust for this
+chimp_risksearch_choice
+```
+
+```{r Plot choice data group level}
+# Define condition labels
+cond.labs <- c("Changing\n environment", "Stable\n environment")
+names(cond.labs) <- c("changing_environment", "stable_environment")
+
+# Create the boxplot for proportion of choices
+chimp_risksearch_choice_group <- ggplot(chimp_risksearch_choice, aes(choice_assortment, percentage_choice)) +
+  geom_boxplot(alpha = 0.2) +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  scale_x_discrete(breaks = c("risky", "safe"), labels = c("Uncertain", "Safe")) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("") +
+  ylab("Proportion of choices\n") +
+  theme(strip.text.x = element_text(size = 12)) +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm")) +
+  facet_grid(~condition, labeller = labeller(condition = cond.labs))
+
+chimp_risksearch_choice_group
+```
+
+```{r Plot of the proportion of safe choices for each subject}
+# Create the scatter plot of the proportion of safe choices (percentage_choice) for each subject, color-coded by condition (with labels)
+
+chimp_risksearch_choice_subjects_label <- chimp_risksearch_choice %>%
+  filter(choice_assortment == "safe") %>%
+  ggplot(aes(subject, percentage_choice, colour = condition)) +
+  geom_point(fill = "white") +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("") +
+  ylab("Proportion of safe choices\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm")) +
+  scale_colour_discrete(
+    name = "Condition",
+    breaks = c("changing_environment", "stable_environment"),
+    labels = c("Changing environment", "Stable environment")
+  )
+
+chimp_risksearch_choice_subjects_label
+
+
+# Create the scatter plot without labels
+chimp_risksearch_choice_subjects <- chimp_risksearch_choice %>%
+  filter(choice_assortment == "safe") %>%
+  ggplot(aes(subject, percentage_choice, colour = condition)) +
+  geom_point(fill = "white") +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("") +
+  ylab("Proportion of safe choices\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm")) +
+  theme(legend.position = "none") +
+  ylim(0, 1)
+
+chimp_risksearch_choice_subjects
+```
+
+```{r How often did chimpanzees choose risky is they only sampled 0 from the risky assortment during exploration}
+# How often did chimpanzees choose risky is they only sampled 0 from the risky assortment during exploration
+# regardless of whether they also explored the safe assortment
+
+# Count the number of times each assortment type was chosen when only zero food items were sampled from the risky assortment
+chimp_risksearch %>%
+  filter(sampled_only_0_in_risky == "yes") %>%
+  dplyr::count(choice_assortment)
+
+# Calculate the proportion of these choices for each subject and condition, and remove any missing trials
+chimp_risksearch_choice_sample_found <- chimp_risksearch %>%
+  group_by(condition, subject, sampled_only_0_in_risky) %>%
+  dplyr::count(choice_assortment) %>%
+  mutate(percentage_choice = n / 512) %>%
+  filter(choice_assortment != "NA")
+
+chimp_risksearch_choice_sample_found
+
+# Create the boxplot of these proportions, split by whether only zero food items were sampled from the risky assortment, and further divided by condition.
+chimp_risksearch_choice_sample_found_plot <- ggplot(chimp_risksearch_choice_sample_found, aes(sampled_only_0_in_risky, percentage_choice, colour = choice_assortment)) +
+  geom_boxplot(fill = "white") +
+  facet_grid(~condition)
+
+chimp_risksearch_choice_sample_found_plot
+```
+
+
+# BAYESIAN MODELS (BINOMIAL)
+
+
+```{r Data for binomial model}
+# To use the binomial model in brms, we have two separate columns for 'searched_yes' and 'searched_no'.
+
+summary_table_exploration <- chimp_risksearch %>%
+  dplyr::group_by(subject, condition, trial_no, subject_sex, subject_age, condition_order) %>%
+  dplyr::summarize(
+    searched_yes = sum(searched == 1, na.rm = TRUE),
+    searched_no = sum(searched == 0, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+colnames(summary_table_exploration)
+
+summary_table_exploration
+
+# Write the dataframe to an Excel file
+write_xlsx(summary_table_exploration, "summary_table_exploration.xlsx")
+```
+
+
+```{r Data preparation binomial model}
+# Z-score normalization for 'trial_no' column
+summary_table_exploration$z.trial <- as.vector(scale(summary_table_exploration$trial_no))
+
+# Z-score normalization for 'subject_age' column
+summary_table_exploration$z.subject_age <- as.vector(scale(summary_table_exploration$subject_age))
+
+colnames(summary_table_exploration)
+```
+
+```{r Calculate the total number of trials}
+summary_table_exploration$total_trials <- summary_table_exploration$searched_yes + summary_table_exploration$searched_no
+summary_table_exploration$total_trials
+
+# pass the number of successes (searched_yes) as the response variable and the number of trials (searched_yes + searched_no) as a weights argument in the model formula.
+# in lme4 syntax, we may write for instance cbind(success, n - success), which is equivalent to success | trials(n) in brms syntax. If the number of trials is constant across all observations, say 10, we may also write success | trials(10). Please note that the cbind() syntax will not work in brms in the expected way because this syntax is reserved for other purposes.
+
+# in our analysis total trials always = 8 (eight trays to open within one trial)
+```
+
+
+## RQ1. Effect of environmental change (see also Table S2 in the Supporting Information)
+
+# MODELS 2.X: searched_yes | trials(total_trials) ~    
+# We used binomial logistic regression models 
+# When family = binomial() is used in brms(), the default link function is logit
+
+```{r model m2.0:  searched_yes | trials(total_trials) ~ control variables}
+modelname <- c("m2.0")
+
+model_formula <- brms::brmsformula(
+  searched_yes | trials(total_trials) ~ subject_sex + z.subject_age + condition_order +
+    (1 + condition + z.trial | subject)
+)
+
+
+m2.0 <- summary_table_exploration %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = binomial(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m2.0)
+
+# Assessing convergence
+plot(m2.0)
+
+# plot only effect of "condition"
+conditional_effects(m2.0)
+```
+
+```{r model m2.1:  searched_yes | trials(total_trials) ~ }
+modelname <- c("m2.1")
+
+model_formula <- brms::brmsformula(
+  searched_yes | trials(total_trials) ~ condition * z.trial + subject_sex + z.subject_age + condition_order +
+    (1 + condition + z.trial | subject)
+)
+
+
+m2.1 <- summary_table_exploration %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    sample_prior = "yes", # Needed to compute Bayes Factor
+    family = binomial(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# Summary of the posterior distribution of the model parameters
+summary(m2.1)
+
+# Trace and density plots to assess convergence
+plot(m2.1)
+
+# Calculate and print conditional effects of the predictors in the model
+conditional_effects(m2.1)
+
+
+# Calculate and plot the conditional effect of "condition:trial"
+p2.1 <- conditional_effects(m2.1, "z.trial:condition:")
+
+# make plot nicer and convert scale back to trial
+at <- c(-2, -1, 0, 1, 2)
+
+p2.1 <- plot(p2.1, plot = FALSE)[[1]] +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  scale_x_continuous("Trials",
+    breaks = at,
+    labels = round(at * sd(summary_table_exploration$trial_no) + mean(summary_table_exploration$trial_no), 0)
+  ) +
+  ylab("Proportion of opened trays\n") +
+  # Apply custom theme to the plot
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) + theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm")) +
+
+  # To keep those legends combined as a single legend, they need to have the same name and the same labels
+
+  scale_colour_discrete(name = "", labels = c("Changing environment", "Stable environment")) +
+  scale_fill_discrete(name = "", labels = c("Changing environment", "Stable environment")) +
+  theme(legend.position = "none")
+
+p2.1
+
+# Figure 2A
+ggsave("./adaptive_exploration_Figure_2A.png", p2.1, width = 10, height = 8)
+```
+
+```{r Plot Effects}
+library(sjPlot)
+
+plot_m2.1 <- plot_model(m2.1,
+  vline.color = "black", # Indicates the vertical intercept that indicates no effect
+  colors = "Accent", # All colorbrewer colors are ok: https://r-graph-gallery.com/38-rcolorbrewers-palettes.html
+  transform = NULL, # Do not back-transform them
+  show.values = TRUE, # Show the corresponding values
+  value.offset = .3, # Adjust position of the values
+  bpe = "mean", # Point estimate mean
+  bpe.style = "dot",
+  prob.outer = .95, # Uncertainty interval
+  terms = c("z.subject_age", "z.trial", "conditionstable_environment", "subject_sex1", "conditionstable_environment:z.trial")
+) # Only pick the values of interest
+
+# Use the theme() function to change the background color
+plot_m2.1 + theme(
+  panel.background = element_rect(fill = "white"),
+  panel.grid.major = element_line(color = "grey"),
+  panel.grid.minor = element_line(color = "grey")
+)
+```
+
+```{r Model 2.1: Compute and interpret a Bayes factor to test whether the parameter is less than zero}
+# Perform one-sided hypothesis testing: to investigate whether the interaction term is less than zero. This is because a negative interaction term would indicate that exploratory behavior increases over trials more in changing environments than in stable ones.
+
+hyp_test_m2.1 <- hypothesis(m2.1, "conditionstable_environment:z.trial < 0")
+hyp_test_m2.1
+
+plot(hyp_test_m2.1)
+
+
+# see: https://mvuorre.github.io/posts/2020-02-06-how-to-calculate-contrasts-from-a-fitted-brms-model/
+# Our Bayesian hypothesis test provided strong evidence in support of our alternative hypothesis, that chimpanzees explore more over trials in changing environments than in stable environments.
+
+# The Evidence Ratio (Bayes Factor) was found to be 3999, indicating that the observed data is roughly 1999 times more likely under our alternative hypothesis compared to the null. This substantial Bayes factor suggests that our data strongly favors the alternative hypothesis.
+
+# Additionally, the Posterior Probability was 1, which can be interpreted as there being a high probability of our alternative hypothesis being true given the observed data.
+```
+
+```{r model m2.2:   searched_yes | trials(total_trials) ~ }
+modelname <- c("m2.2")
+
+model_formula <- brms::brmsformula(
+  searched_yes | trials(total_trials) ~ condition + z.trial + subject_sex + z.subject_age + condition_order +
+    (1 + condition + z.trial | subject)
+)
+
+
+m2.2 <- summary_table_exploration %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    sample_prior = "yes", # Needed to compute Bayes Factor
+    family = binomial(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m2.2)
+
+# Assessing convergence
+plot(m2.2)
+
+# effects
+conditional_effects(m2.2)
+```
+
+# Model comparison M2.X
+
+```{r Binomial Model comparison with the loo package}
+m2.0 <- add_criterion(m2.0, "loo")
+m2.1 <- add_criterion(m2.1, "loo")
+m2.2 <- add_criterion(m2.2, "loo")
+
+
+# Compare both models
+comparison_models_m2.x <- loo_compare(m2.0, m2.1, m2.2, criterion = "loo")
+
+# Show more details with simplify=FALSE
+print(comparison_models_m2.x, simplify = FALSE, digits = 3)
+
+models_1_weights <- loo_model_weights(m2.0, m2.1, m2.2)
+models_1_weights
+
+# Check Pareto k diagnostic values
+loo_m2.0 <- loo::loo(m2.0)
+loo_m2.1 <- loo::loo(m2.1)
+loo_m2.2 <- loo::loo(m2.2)
+
+print(loo_m2.0)
+print(loo_m2.1)
+print(loo_m2.2)
+```
+
+
+## RQ2. Effect of outcome variance (see also Table S3 in the Supporting Information)
+
+# EFFECT OF OUTCOME VARIANCE: Influence of experiencing variance within the risky assortment on the difference in search within the safe and risky assortment
+
+```{r Coding :Difference in search between the risky and safe assortment}
+search_assortment_variance <- chimp_risksearch %>%
+  # Recode the 'condition' variable for better plot aesthetics
+  mutate(condition = recode(condition, "changing_environment" = "Changing environment", "stable_environment" = "Stable environment")) %>%
+  # Create a new variable 'search_assortment_1' that categorizes search assortments as 'no_search', 'risky', or 'safe'
+  mutate(search_assortment_1 = case_when(is.na(search_assortment) ~ "no_search", search_assortment == "risky" ~ "risky", search_assortment == "safe" ~ "safe")) %>%
+  # Select relevant variables
+  select(subject, session, trial_no, condition, search_assortment_1, sample_found, experienced_variance_risk) %>%
+  # Group the data by subject, trial_no, search_assortment_1, condition, and experienced_variance_risk
+  group_by(subject, trial_no, search_assortment_1, condition, experienced_variance_risk) %>%
+  # Summarize the grouped data to get counts of each group
+  dplyr::summarise(count = n()) %>%
+  # Spread the 'search_assortment_1' variable into separate columns for 'risky', 'safe', and 'no_search'
+  spread(search_assortment_1, count) %>%
+  # Replace NA values with 0 in the 'risky', 'safe', and 'no_search' columns
+  mutate(
+    risky = replace_na(risky, 0),
+    safe = replace_na(safe, 0),
+    no_search = replace_na(no_search, 0)
+  ) %>%
+  # Calculate the difference between 'risky' and 'safe'
+  mutate(difference_risky_safe = risky - safe)
+
+# or absolute numbers:
+# mutate(difference_risky_safe = abs(risky - safe))
+
+# Display the resulting dataframe
+search_assortment_variance
+```
+
+```{r Descriptive statistics about experienced variance}
+## Variance : Chimpanzees opened at least one tray in 91% of trials (773 out of 848 (848=896-48) of trials). Within these trials, subjects experienced variance in 62 % of trials (481 out of 773 trials) and no variance in 38% of trials  (292 out of 773 trails). Subjects did not explore any trial in 9% of trials (75 out of 848 trails). 6% of trials (48 out of 896) are missing trials
+
+# Counting the Number of Trials with no search , i.e. Where 'no_search' Equals 8
+# Filtering the data to include only trials where 'no_search' equals 8
+no_search_8_trials <- search_assortment_variance %>%
+  dplyr::filter(no_search == 8)
+# Counting the number of trials where 'no_search' equals 8
+total_no_search_8_trials <- nrow(no_search_8_trials)
+total_no_search_8_trials
+# Total of 848 rows (see above) minus 75 = 773
+
+# Experienced variance
+# Filter the data frame to include only rows where 'experienced_variance_risk' equals "yes"
+experienced_variance_risk_yes <- search_assortment_variance %>%
+  dplyr::filter(experienced_variance_risk == "yes")
+# Count the number of these rows
+total_experienced_variance_risk_yes <- nrow(experienced_variance_risk_yes)
+total_experienced_variance_risk_yes
+```
+
+```{r plot from the search_assortment_variance dataframe }
+# Load the necessary library
+library(ggpubr)
+
+search_assortment_variance_plot <- search_assortment_variance %>%
+  # Drop rows with NA in the 'experienced_variance_risk' column
+  drop_na(experienced_variance_risk) %>%
+  # Start creating the plot
+  ggplot(aes(x = trial_no, y = difference_risky_safe, colour = experienced_variance_risk)) +
+
+  # Add a smoothed line (loess by default) to the plot, with a transparency of 0.2
+  geom_smooth(alpha = 0.2) +
+
+  # Facet the plot by the 'condition' variable
+  facet_grid(~condition) +
+
+  # Set the font size of the facet labels
+  theme(
+    strip.text.x = element_text(size = 14),
+    strip.text.y = element_text(size = 20)
+  ) +
+
+  # Use a minimal theme for the plot
+  theme_minimal() +
+
+  # Set the font size of the axis titles
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+
+  # Set the font size of the axis text
+  theme(axis.text = element_text(size = 15)) +
+
+  # Label the x-axis
+  scale_x_continuous("\nTrials") +
+
+  # Label the y-axis
+  ylab("Mean difference of opened trays\n") +
+
+  # Additional theme options to customize the plot appearance
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm")) +
+  theme(strip.text.x = element_text(size = 12)) +
+
+  # Define the color and fill scales with custom names and labels
+  scale_colour_discrete(name = "", labels = c("No variance experienced", "Variance experienced", "No exploration")) +
+  scale_fill_discrete(name = "", labels = c("No variance experienced", "Variance experienced", "No exploration"))
+
+search_assortment_variance_plot
+```
+
+# Bayesian model
+
+```{r Z-transformation of variables: search_assortment_variance}
+# Z-score normalization for 'trial_no' column
+search_assortment_variance$z.trial <- as.vector(scale(search_assortment_variance$trial_no))
+```
+
+```{r  model m3.0_rs:  difference_risky_safe ~ experienced_variance_risk + control variables}
+modelname <- "m3.0"
+
+# Specify model formula
+model_formula <- brms::brmsformula(
+  difference_risky_safe ~ experienced_variance_risk + condition + z.trial + (1 + condition + z.trial | subject)
+)
+
+# Fit the model
+m3.0 <- search_assortment_variance %>%
+  brm(
+    formula = model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = gaussian(), # Use Gaussian family for a continuous outcome variable
+    sample_prior = "yes", # Needed to compute Bayes Factor
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+# Q-Q Plot
+qqnorm(resid(m3.0))
+qqline(resid(m3.0))
+
+# Bayesian Posterior Predictive Checks: generates a plot comparing the distributions of the observed and predicted data.
+pp_check(m3.0)
+
+# results posterior distribution
+summary(m3.0)
+
+# Assessing convergence
+plot(m3.0)
+
+# plot
+conditional_effects(m3.0)
+
+# Calculate and plot the conditional effect of "experienced_variance_risk"
+p3.0 <- conditional_effects(m3.0, "experienced_variance_risk")
+
+
+p3.0 <- plot(p3.0, plot = FALSE)[[1]] +
+  theme_minimal() +
+  theme(axis.title = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 12)) +
+  ylab("Difference in opened trays\nbetween uncertain and safe option\n") +
+  xlab("Experienced variance within the uncertain option")
+
+
+p3.0
+
+# FIGURE 2C
+ggsave("./adaptive_exploration_Figure_2C.png", p3.0, width = 10, height = 8)
+```
+
+```{r Model 3.0: Compute and interpret a Bayes factor to test whether the parameter is greater than zero}
+# Perform one-sided hypothesis testing: to investigate whether the estimate is greater than zero.
+
+hyp_test_m3.0 <- hypothesis(m3.0, "experienced_variance_riskyes > 0")
+hyp_test_m3.0
+
+plot(hyp_test_m3.0)
+
+# The hypothesis test provides compelling evidence that experiencing variance risk has a significant positive effect on the difference in search between the risky and safe assortment.
+```
+
+```{r  model m3.1_rs:  difference_risky_safe ~ experienced_variance_risk*condition + control variables }
+modelname <- "m3.1"
+
+# Specify model formula
+model_formula <- brms::brmsformula(
+  difference_risky_safe ~ experienced_variance_risk * condition + z.trial + (1 + condition + z.trial | subject)
+)
+
+# Fit the model
+m3.1 <- search_assortment_variance %>%
+  brm(
+    formula = model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = gaussian(), # Use Gaussian family for a continuous outcome variable
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+# results posterior distribution
+summary(m3.1)
+
+# Assessing convergence
+plot(m3.1)
+
+# plot
+conditional_effects(m3.1)
+```
+
+```{r  model m3.2:  difference_risky_safe ~ experienced_variance_risk*trial + control variables}
+modelname <- "m3.2"
+
+# Specify model formula
+model_formula <- brms::brmsformula(
+  difference_risky_safe ~ experienced_variance_risk * z.trial + condition + (1 + condition + z.trial | subject)
+)
+
+# Fit the model
+m3.2 <- search_assortment_variance %>%
+  brm(
+    formula = model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = gaussian(), # Use Gaussian family for a continuous outcome variable
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+# results posterior distribution
+summary(m3.2)
+
+# Assessing convergence
+plot(m3.2)
+
+# plot
+conditional_effects(m3.2)
+```
+
+# Model comparison M3.X
+
+```{r Model comparison M3.X with the loo package}
+m3.0 <- add_criterion(m3.0, c("loo"))
+m3.1 <- add_criterion(m3.1, c("loo"))
+m3.2 <- add_criterion(m3.2, c("loo"))
+
+# compare models
+comparison_models_3 <- loo_compare(m3.0, m3.1, m3.2, criterion = "loo")
+
+# show more details with simplify=FALSE
+print(comparison_models_3, simplify = FALSE, digits = 3)
+
+models_3_weights <- loo_model_weights(m3.0, m3.1, m3.2)
+models_3_weights
+```
+
+
+## RQ3. Exploration strategies and switching behavior (see also Table S4 in the Supporting Information)
+
+# SWITCHING BEHAVIOUR
+# MODELS 4.X : switched_assortment ~    
+# Influence of seeing a reward/no reward in the risky assortment of the previous search order on switching behaviour
+
+
+```{r Code for Assigning and Analyzing Previous Search Behavior and Outcome }
+# This code is preparing the data for subsequent analysis, by creating two new variables: prev_search_assortment and prev_sample_found, which represent the assortment type and whether a sample was found in the previous search, respectively. It then filters the data to only include instances where the previous search assortment was "risky".
+
+# Initialize two new columns in the chimp_risksearch dataframe
+chimp_risksearch$prev_search_assortment <- NA
+chimp_risksearch$prev_sample_found <- NA
+
+# Loop over each row in the chimp_risksearch dataframe
+for (i in 1:nrow(chimp_risksearch)) {
+  # Identify the row(s) that match the current row in terms of search_order, trial_no, date, session, condition, and subject
+  sel <- which(chimp_risksearch$search_order == chimp_risksearch$search_order[i] - 1 &
+    chimp_risksearch$trial_no == chimp_risksearch$trial_no[i] &
+    chimp_risksearch$date == chimp_risksearch$date[i] &
+    chimp_risksearch$session == chimp_risksearch$session[i] &
+    chimp_risksearch$condition == chimp_risksearch$condition[i] &
+    chimp_risksearch$subject == chimp_risksearch$subject[i])
+
+  # If there's exactly one matching row, fill the current row's prev_search_assortment and prev_sample_found with the respective values from the matching row
+  if (length(sel) == 1) {
+    chimp_risksearch$prev_sample_found[i] <- as.character(chimp_risksearch$sample_found_binary[sel])
+    chimp_risksearch$prev_search_assortment[i] <- as.character(chimp_risksearch$search_assortment[sel])
+  }
+  # If there's more than one matching row, pause execution for debugging
+  else if (length(sel) > 1) {
+    browser()
+  }
+}
+
+# Subset the dataframe to keep only the rows where prev_search_assortment is not NA and equals "risky"
+# Save the subset to a new dataframe instead of overwriting the original one
+chimp_risksearch_risky <- subset(chimp_risksearch, !is.na(prev_search_assortment) & prev_search_assortment == "risky")
+
+# Convert prev_sample_found to a factor in the new dataframe
+chimp_risksearch_risky$prev_sample_found <- as.factor(chimp_risksearch_risky$prev_sample_found)
+
+head(chimp_risksearch_risky)
+```
+
+```{r Count switches}
+# How often did they switch at all if they continued to search after finding or not finding food in the risky option). Here we do not consider trials where they stopped searching.
+
+chimp_risksearch_risky %>%
+  group_by(prev_sample_found) %>%
+  dplyr::count(switched_assortment)
+
+# switched after not finding food = 86/(632+86) = 0.1197772
+
+# stayed within the same option after not finding food 632/(632+86) = 0.8802228
+
+# switched after finding food = 118/(587+118) = 0.1673759
+# stayed within the same option after finding food = 587/(587+118) = 0.8326241
+```
+
+```{r model m4.0:  switched_assortment ~ control variables}
+modelname <- c("m4.0")
+
+model_formula <- brms::brmsformula(
+  switched_assortment ~ condition + z.trial + subject_sex + z.subject_age +
+    (1 + condition + z.trial | subject)
+)
+
+
+m4.0 <- chimp_risksearch_risky %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = bernoulli(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m4.0)
+
+# Assessing convergence
+plot(m4.0)
+
+# plot
+conditional_effects(m4.0)
+
+
+p_m4.0 <- conditional_effects(m4.0, "condition")
+```
+
+```{r model m4.1: switched_assortment ~ prev_sample_found + control predictors}
+modelname <- c("m4.1")
+
+model_formula <- brms::brmsformula(
+  switched_assortment ~ prev_sample_found + condition + z.trial + subject_sex + z.subject_age +
+    (1 + condition + z.trial | subject)
+)
+
+
+m4.1 <- chimp_risksearch_risky %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = bernoulli(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m4.1)
+
+# Assessing convergence
+plot(m4.1)
+
+# plot
+conditional_effects(m4.1)
+
+
+# plot only effect of "condition:trial"
+p4.1 <- conditional_effects(m4.1, "prev_sample_found")
+
+
+# plot
+
+p4.1 <- plot(p4.1, plot = FALSE)[[1]] +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("\nReward found in the risky option during exploration") +
+  scale_x_discrete(
+    breaks = c("0", "1"),
+    labels = c("no food", "food")
+  ) +
+  ylab("Proportion of switches\n from the risky to the safe option\n") +
+  # animal behaviour requirements
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) + theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p4.1
+```
+
+```{r Model 4.1: Compute and interpret a Bayes factor to test whether the parameter is greater than zero}
+# Perform one-sided hypothesis testing: to investigate whether the estimate is greater than zero.
+
+hyp_test_m4.1 <- hypothesis(m4.1, "prev_sample_found1 > 0")
+hyp_test_m4.1
+
+plot(hyp_test_m4.1)
+```
+
+```{r  model m4.2: switched_assortment ~ prev_sample_found * condition + control predictors }
+modelname <- c("m4.2")
+
+model_formula <- brms::brmsformula(
+  switched_assortment ~ prev_sample_found * condition + z.trial + subject_sex + z.subject_age +
+    (1 + condition + z.trial | subject)
+)
+
+
+m4.2 <- chimp_risksearch_risky %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = bernoulli(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m4.2)
+
+# Assessing convergence
+plot(m4.2)
+
+# plot
+p_m4.2 <- conditional_effects(m4.2, effects = "prev_sample_found:condition")
+
+p_m4.2
+```
+
+# Model comparison M4.X
+
+```{r Model comparison M4.X with the loo package}
+m4.0 <- add_criterion(m4.0, c("loo"))
+m4.1 <- add_criterion(m4.1, c("loo"))
+m4.2 <- add_criterion(m4.2, c("loo"))
+
+# compare models
+comparison_models_2 <- loo_compare(m4.0, m4.1, m4.2, criterion = "loo")
+
+# show more details with simplify=FALSE
+print(comparison_models_2, simplify = FALSE, digits = 3)
+
+models_2_weights <- loo_model_weights(m4.0, m4.1, m4.2)
+models_2_weights
+```
+
+## SWITCHING BEHAVIOUR
+
+```{r switch assortment to as. numeric and dummy coded}
+# Convert 'switched_assortment' to numeric: 'yes' becomes 1
+chimp_risksearch$switched_assortment <- as.numeric(chimp_risksearch$switched_assortment == levels(chimp_risksearch$switched_assortment)[2])
+
+head(chimp_risksearch)
+```
+
+```{r Overall switching behaviour}
+# Calculate the sum of 'switched_assortment' for each combination of 'trial_no', 'condition', and 'subject'
+# Exclude rows where 'switched_assortment' is NA
+chimp_switched_assortment <- chimp_risksearch %>%
+  group_by(trial_no, condition, subject) %>%
+  filter(!is.na(switched_assortment)) %>%
+  dplyr::summarise(sum_switched_assortment = sum(switched_assortment))
+
+# Display the new data frame
+chimp_switched_assortment
+
+# Plot 'sum_switched_assortment' against 'trial_no' with a smoothed line
+# Customize the appearance of the plot
+chimp_switched_assortment_plot <- ggplot(chimp_switched_assortment, aes(trial_no, sum_switched_assortment)) +
+  geom_smooth() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("Trials\n") +
+  ylab("Switches between assortments\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5),
+    axis.ticks.length.y = unit(.25, "cm")
+  )
+
+chimp_switched_assortment_plot
+```
+
+```{r Switching behaviour per condition}
+# Create a plot of 'sum_switched_assortment' against 'trial_no', colored by 'condition'
+# Add a smooth line to the plot
+# Customize the plot's appearance
+chimp_switched_assortment_condition_plot <- ggplot(chimp_switched_assortment, aes(trial_no, sum_switched_assortment, colour = condition)) +
+  geom_smooth() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("Trials\n") +
+  ylab("Switches between assortments\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5),
+    axis.ticks.length.y = unit(.25, "cm")
+  )
+
+chimp_switched_assortment_condition_plot
+```
+
+```{r Switching behaviour per trial}
+# Calculate the sum of 'switched_assortment' for each combination of 'trial_no' and 'subject'
+# Exclude rows where 'switched_assortment' is NA
+chimp_switched_assortment <- chimp_risksearch %>%
+  group_by(trial_no, subject) %>%
+  filter(!is.na(switched_assortment)) %>%
+  dplyr::summarise(sum_switched_assortment = sum(switched_assortment))
+
+chimp_switched_assortment
+
+# Create a boxplot of 'sum_switched_assortment' against 'trial_no'
+# Customize the plot's appearance
+chimp_switched_assortment_trial_plot <- ggplot(chimp_switched_assortment, aes(trial_no, sum_switched_assortment)) +
+  geom_boxplot(aes(group = cut_width(trial_no, 0.25))) +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15)) +
+  theme(axis.title.y = element_text(size = 15)) +
+  theme(axis.text = element_text(size = 15)) +
+  xlab("Trials\n") +
+  ylab("Switches between options\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5),
+    axis.ticks.length.y = unit(.25, "cm")
+  )
+
+chimp_switched_assortment_trial_plot
+```
+
+# EXPLORATION STRATEGIES
+
+```{r Exploration strategies overview}
+# Display the structure of 'exploration_strategy' in 'chimp_risksearch'
+str(chimp_risksearch$exploration_strategy)
+
+# Provide a summary of 'exploration_strategy' in 'chimp_risksearch'
+summary(chimp_risksearch$exploration_strategy)
+
+# Group 'chimp_risksearch' by 'subject' and 'condition'
+# Count the number of occurrences of each 'exploration_strategy'
+chimp_exploration_strategy <- chimp_risksearch %>%
+  group_by(subject, condition) %>%
+  dplyr::count(exploration_strategy)
+
+chimp_exploration_strategy
+
+# see Excel Sheet data_risksearch_exploration_strategy for % results. Because not all chimpanzees did all trials, we had to adjust for this
+
+# Exploration strategies:
+
+# Piecewise exploration strategy alternates back and forth between options
+# exploration one prospect strategy takes samples from one option
+# comprehensive exploration strategy takes at least one sample from each option in turn.
+# no exploration
+```
+
+```{r Statistics exploration strategies}
+# Import data from a text file
+chimp_risksearch_exploration_strategy <- rio::import("./data_risksearch_exploration_strategy.txt")
+
+# Compute median of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  dplyr::summarise(median = median(Proportion))
+
+# Compute mean of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  dplyr::summarise(mean = mean(Proportion))
+
+# Compute sum of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  dplyr::summarise(sum = sum(Proportion))
+
+# Filter data for 'changing_environment' condition
+# Compute mean of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  filter(condition == "changing_environment") %>%
+  dplyr::summarise(mean = mean(Proportion))
+
+# Filter data for 'changing_environment' condition
+# Compute median of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  filter(condition == "changing_environment") %>%
+  dplyr::summarise(median = median(Proportion))
+
+# Filter data for 'stable_environment' condition
+# Compute mean of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  filter(condition == "stable_environment") %>%
+  dplyr::summarise(mean = mean(Proportion))
+
+# Filter data for 'stable_environment' condition
+# Compute median of 'Proportion' for each 'exploration_strategy'
+chimp_risksearch_exploration_strategy %>%
+  group_by(exploration_strategy) %>%
+  filter(condition == "stable_environment") %>%
+  dplyr::summarise(median = median(Proportion))
+```
+
+```{r Exploration strategies plots}
+# Define labels for the conditions
+cond.labs <- c("Changing environment", "Stable environment")
+names(cond.labs) <- c("changing_environment", "stable_environment")
+
+# Exploration strategies per condition
+# Create a boxplot of 'Proportion' for each 'exploration_strategy', facetted by 'condition'
+# Customize the plot's appearance
+plot_chimp_risksearch_exploration_strategy_condition <- ggplot(chimp_risksearch_exploration_strategy, aes(exploration_strategy, Proportion)) +
+  geom_boxplot() +
+  theme_minimal() +
+  facet_grid(~condition, labeller = labeller(condition = cond.labs)) + # Use the defined labels for the conditions
+  theme(axis.title.x = element_text(size = 15), axis.text.x = element_text(angle = 45, hjust = 1), axis.title.y = element_text(size = 15), axis.text = element_text(size = 10)) +
+  xlab("") +
+  scale_x_discrete(
+    breaks = c("comprehensive_exploration_each_prospect", "exploration_one_prospect", "no_exploration", "piecewise_exploration"),
+    labels = c("Sequential\n exploration\n (both options)", "One option", "No exploration", "Piecewise\n exploration\n (both options)")
+  ) +
+  ylab("Proportion of trials\n") +
+  theme(
+    strip.text.x = element_text(size = 12), panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5), axis.ticks.length.y = unit(.25, "cm")
+  )
+
+# Display the plot
+plot_chimp_risksearch_exploration_strategy_condition
+
+# FIGURE 2E
+# Save the plot as a PNG file
+ggsave("./adaptive_exploration_Figure_2E.png", plot_chimp_risksearch_exploration_strategy_condition, width = 10, height = 8)
+
+
+# Exploration strategies per subject
+# Create a boxplot of 'Proportion' for each 'exploration_strategy', facetted by 'subject'
+# Customize the plot's appearance
+plot_chimp_risksearch_exploration_strategy_subject <- ggplot(chimp_risksearch_exploration_strategy, aes(exploration_strategy, Proportion)) +
+  geom_boxplot() +
+  theme_minimal() +
+  facet_grid(~subject) + # Facet the plot by 'subject'
+  theme(axis.title.x = element_text(size = 15), axis.text.x = element_text(angle = 45, hjust = 1), axis.title.y = element_text(size = 15), axis.text = element_text(size = 8)) +
+  xlab("\nExploration patterns\n") +
+  scale_x_discrete(
+    breaks = c("comprehensive_exploration_each_prospect", "exploration_one_prospect", "no_exploration", "piecewise_exploration"),
+    labels = c("Seq.", "One.", "No.", "Piece.")
+  ) +
+  ylab("Proportion of trials\n") +
+  theme(
+    strip.text.x = element_text(size = 12), panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5), axis.ticks.length.y = unit(.25, "cm")
+  )
+
+# Display the plot
+plot_chimp_risksearch_exploration_strategy_subject
+
+
+
+# Exploration strategies overall
+# Create a boxplot of 'Proportion' for each 'exploration_strategy' without any faceting
+# Customize the plot's appearance
+plot_chimp_risksearch_exploration_strategy <- ggplot(chimp_risksearch_exploration_strategy, aes(exploration_strategy, Proportion)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15), axis.text = element_text(size = 12)) +
+  xlab("Exploration patterns\n") +
+  scale_x_discrete(
+    breaks = c("comprehensive_exploration_each_prospect", "exploration_one_prospect", "no_exploration", "piecewise_exploration"),
+    labels = c("Sequential\n exploration\n (both options)", "One option", "No exploration", "Piecewise\n exploration\n (both options)")
+  ) +
+  ylab("Proportion of trials\n") +
+  theme(
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    axis.ticks.y = element_line(size = 0.5),
+    axis.ticks.length.y = unit(.25, "cm")
+  )
+
+# Display the plot
+plot_chimp_risksearch_exploration_strategy
+
+# FIGURE 2D
+# Save the plot as a PNG file
+ggsave("./adaptive_exploration_Figure_2D.png", plot_chimp_risksearch_exploration_strategy, width = 10, height = 8)
+```
+
+
+## CORRELATIONS: Exploration effort and Risk and uncertainty preferences. 
+
+```{r mean per subject over both conditions}
+chimp_risksearch %>%
+  group_by(subject) %>%
+  filter(!is.na(searched)) %>%
+  dplyr::summarise(mean_search = mean(searched))
+
+chimp_risksearch %>%
+  group_by(subject) %>%
+  filter(!is.na(searched)) %>%
+  dplyr::summarise(sum_search = sum(searched))
+```
+
+```{r Correlations: Exploration effort and Risk and uncertainty preferences.}
+chimp_risksearch_correlations <- rio::import("./data_risksearch_grouped_correlations.txt")
+
+risksearch_correlations <- chimp_risksearch_correlations %>%
+  select(exploration_effort_mean_Study2, exploration_effort_sum_Study2, experiment_ambiguity, experiment_risk, general_risk, food_risk, snake_risk, escape_risk, hierarchy_risk, strangers_risk, risk_total, ranking_risk, short_term_memory_0s, short_term_memory_15s, short_term_memory_30s, short_term_memory_sumscore) %>%
+  apa.cor.table(filename = "risksearch_correlations.doc")
+
+risksearch_correlations
+```
+
+```{r Plots Correlations: Exploration effort and Risk and uncertainty preferences}
+p_corr_amb <- chimp_risksearch_correlations %>% ggplot(aes(x = experiment_ambiguity, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort (total trays opened)\n") +
+  xlab("\nProportion of ambiguous choices") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_amb
+
+p_corr_risk <- chimp_risksearch_correlations %>% ggplot(aes(x = experiment_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort (total trays opened)\n") +
+  xlab("\nProportion of risky choices") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk
+
+p_corr_risk_general <- chimp_risksearch_correlations %>% ggplot(aes(x = general_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort") +
+  xlab("general risk") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk_general
+
+p_corr_risk_food <- chimp_risksearch_correlations %>% ggplot(aes(x = food_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort") +
+  xlab("foraging risk") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk_food
+
+p_corr_risk_snake <- chimp_risksearch_correlations %>% ggplot(aes(x = snake_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort") +
+  xlab("snake risk") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk_snake
+
+p_corr_risk_escape <- chimp_risksearch_correlations %>% ggplot(aes(x = escape_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort") +
+  xlab("escape risk") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk_escape
+
+p_corr_risk_hierarchy <- chimp_risksearch_correlations %>% ggplot(aes(x = hierarchy_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort") +
+  xlab("hierarchy risk") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk_hierarchy
+
+p_corr_risk_strangers <- chimp_risksearch_correlations %>% ggplot(aes(x = strangers_risk, y = exploration_effort_mean_Study2)) +
+  geom_smooth(method = glm) +
+  geom_jitter(alpha = 0.3) +
+  ylab("Exploration effort") +
+  xlab("strangers risk") +
+  theme_minimal() +
+  theme(
+    # Hide panel borders and remove grid lines
+    panel.border = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    # Change axis line
+    axis.line = element_line(colour = "black")
+  ) +
+  theme(axis.ticks.y = element_line(size = 0.5)) +
+  theme(axis.ticks.length.y = unit(.25, "cm"))
+
+p_corr_risk_strangers
+```
+
+```{r Save workspace}
+# Save all objects in the workspace
+save.image(file = "workspace_risksearch_analysis.RData")
+```

@@ -1,0 +1,220 @@
+---
+title: "Proof of concept: Adaptive exploration in chimpanzees" 
+author: "Lou M. Haux"
+date: "02/02/2024"
+output: html_document
+---
+
+```{r libraries}
+# Load and install (if necessary) required libraries
+pacman::p_load(tidyverse, dplyr, brms, here, psych, ggplot2, kableExtra, ggridges, plyr, tidyr, cowplot, ggeasy, apaTables, writexl)
+```
+
+
+```{r Load my workspace}
+#load("workspace_proof_of_concept_analysis.RData")
+```
+
+
+```{r load data}
+proof_of_concept <- rio::import("./SourceData_S03_adaptive_exploration_data_proof_of_concept.txt")
+```
+
+
+# Overview
+
+```{r Overall overview}
+summary(proof_of_concept)
+str(proof_of_concept)
+proof_of_concept
+```
+
+# PREPARATORY STEPS BAYESIAN ANALYSIS
+
+```{r convert variables into factors}
+proof_of_concept$subject <- as.factor(proof_of_concept$subject)
+proof_of_concept$subject_sex <- as.factor(proof_of_concept$subject_sex)
+proof_of_concept$condition <- as.factor(proof_of_concept$condition)
+proof_of_concept$order_condition <- as.factor(proof_of_concept$order_condition)
+proof_of_concept$success <- as.factor(proof_of_concept$success)
+proof_of_concept$first_search <- as.factor(proof_of_concept$first_search)
+proof_of_concept$second_search <- as.factor(proof_of_concept$second_search)
+proof_of_concept$searched_one <- as.factor(proof_of_concept$searched_one)
+proof_of_concept$searched_both <- as.factor(proof_of_concept$searched_both)
+```
+
+```{r dummy coding: sex}
+proof_of_concept$subject_sex <- as.numeric(proof_of_concept$subject_sex == levels(proof_of_concept$subject_sex)[2])
+```
+
+```{r convert variables into factors}
+proof_of_concept$subject <- as.factor(proof_of_concept$subject)
+proof_of_concept$subject_sex <- as.factor(proof_of_concept$subject_sex)
+proof_of_concept$condition <- as.factor(proof_of_concept$condition)
+proof_of_concept$success <- as.factor(proof_of_concept$success)
+proof_of_concept$first_search <- as.factor(proof_of_concept$first_search)
+proof_of_concept$second_search <- as.factor(proof_of_concept$second_search)
+proof_of_concept$searched_one <- as.factor(proof_of_concept$searched_one)
+proof_of_concept$searched_both <- as.factor(proof_of_concept$searched_both)
+```
+
+```{r z-transformation of variables}
+# z-transformation of trial number and age
+proof_of_concept$z.trial <- as.vector(scale(proof_of_concept$trial_subject))
+proof_of_concept$z.subject_age <- as.vector(scale(proof_of_concept$subject_age))
+```
+
+
+## Proof of concept (see also Table S1 in the Supporting Information)
+
+# Model 1.0 : searched ~ control predictors
+
+```{r model m1.0:  searched_one ~ control predictors}
+modelname <- c("m1.0")
+
+model_formula <- brms::brmsformula(
+  searched_one ~ subject_sex + z.subject_age + order_condition +
+    (1 + condition + z.trial | subject)
+)
+
+
+m1.0 <- proof_of_concept %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = bernoulli(),
+    iter = 4000,
+    control = list(adapt_delta = 0.8)
+  )
+
+
+# results posterior distribution
+summary(m1.0)
+
+# Assessing convergence
+plot(m1.0)
+
+# plot only effect of "condition"
+conditional_effects(m1.0)
+```
+
+
+# Model 1.1 : searched ~ condition + control predictors
+
+```{r model m1.1:  searched_one ~ searched ~ condition + control predictors}
+# increased adapt delta to 0.99
+
+modelname <- c("m1.1")
+
+model_formula <- brms::brmsformula(
+  searched_one ~ condition + z.trial + subject_sex + z.subject_age + order_condition +
+    (1 + condition + z.trial | subject)
+)
+
+
+m1.1 <- proof_of_concept %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = bernoulli(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m1.1)
+
+# Assessing convergence
+plot(m1.1)
+
+# plot only effect of "condition"
+p1.1 <- conditional_effects(m1.1, "condition")
+
+p1.1
+```
+
+
+# Model 1.2 : searched ~ condition*z.trial + control predictors
+
+```{r model m1.2:  searched_one ~ condition*z.trial + control predictors}
+# increased adapt delta to 0.99
+
+modelname <- c("m1.2")
+
+model_formula <- brms::brmsformula(
+  searched_one ~ condition * z.trial + subject_sex + z.subject_age + order_condition +
+    (1 + condition + z.trial | subject)
+)
+
+
+m1.2 <- proof_of_concept %>%
+  brm(model_formula,
+    data = ., cores = 4, chains = 4, future = F, file = modelname,
+    prior = set_prior("normal(0, 2)", class = "b"),
+    family = bernoulli(),
+    iter = 4000,
+    control = list(adapt_delta = 0.99)
+  )
+
+
+# results posterior distribution
+summary(m1.2)
+
+conditional_effects(m1.2)
+
+# Assessing convergence
+plot(m1.2)
+
+# plot only effect of "condition"
+p1.2_cond <- conditional_effects(m1.2, "condition:z.trial")
+```
+
+
+```{r Model m1.2: Compute and interpret a Bayes factor to test whether the parameter is greater than zero}
+# Perform one-sided hypothesis testing: to investigate whether the interaction term is greater than zero.
+
+hyp_test_m1.2 <- hypothesis(m1.2, "conditionuncertainty:z.trial > 0")
+hyp_test_m1.2
+
+plot(hyp_test_m1.2)
+
+# Based on the one-sided hypothesis testing, the interaction term "conditionuncertainty:z.trial" is significantly greater than zero (Estimate = 0.47, Est.Error = 0.27, CI.Lower = 0.02, CI.Upper = 0.92, Evid.Ratio = 23.77, Post.Prob = 0.96). This indicates a strong evidence that the interaction between condition uncertainty and normalized trial number significantly affects the probability of the 'searched_one' outcome in the binomial logistic regression model.
+```
+
+# Model comparison
+
+```{r Model comparison with the loo package}
+# Add 'loo' criterion to each model
+m1.0 <- add_criterion(m1.0, "loo")
+m1.1 <- add_criterion(m1.1, "loo")
+m1.2 <- add_criterion(m1.2, "loo")
+
+# Compare the models
+comparison_models_m1.x <- loo_compare(m1.0, m1.1, m1.2, criterion = "loo")
+
+# Print the comparison details
+print(comparison_models_m1.x, simplify = FALSE, digits = 3)
+
+# Calculate model weights
+models_1_weights <- loo_model_weights(m1.0, m1.1, m1.2)
+
+# Print model weights
+print(models_1_weights)
+
+# Check Pareto k diagnostic values
+loo_m1.0 <- loo::loo(m1.0)
+loo_m1.1 <- loo::loo(m1.1)
+loo_m1.2 <- loo::loo(m1.2)
+
+# Print the 'loo' results for each model
+print(loo_m1.0)
+print(loo_m1.1)
+print(loo_m1.2)
+```
+
+
+```{r Save workspace}
+# Save all objects in the workspace
+save.image(file = "workspace_proof_of_concept_analysis.RData")
+```
