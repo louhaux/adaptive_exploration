@@ -13,6 +13,7 @@ The dataset for the proof of concept and the codebook for the dataset that descr
 
 ## Versions of the packages used in the analysis
 R version 4.4.1 (2024-06-14)
+
 output of sessionInfo() 
 
 attached base packages:
