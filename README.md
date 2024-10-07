@@ -12,6 +12,8 @@ The dataset for the proof of concept and the codebook for the dataset that descr
 (see SourceData_S03)
 
 ## Versions of the packages used in the analysis
+output of sessionInfo() 
+
 attached base packages:
 [1] stats     graphics  grDevices utils     datasets  methods   base     
 
