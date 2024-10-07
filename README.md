@@ -11,7 +11,7 @@ The dataset for the experiment and the codebook for the dataset that describes t
 The dataset for the proof of concept and the codebook for the dataset that describes the variables are stored in the analysis_proof_of_concept folder.  
 (see SourceData_S03)
 
-## Versions of the packages used in the analysis
+## Versions of the packages used to run the analysis
 R version 4.4.1 (2024-06-14)
 
 output of sessionInfo() 
