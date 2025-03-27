@@ -2,7 +2,8 @@
 This repository contains the analysis code for the "Adaptive exploration in chimpanzees" project.
 
 All important details are reported in the original paper for the project:
-- journal article: (under review)
+- journal article:
+Haux, L. M., Engelmann, J. M., Herrmann, E., & Hertwig, R. (2025). Chimpanzees adapt their exploration to key properties of the environment. Nature Communications, 16(1), 1807.
 
 ## Obtaining the dataset
 The dataset for the experiment and the codebook for the dataset that describes the variables are stored in the analysis_experiment folder.  
